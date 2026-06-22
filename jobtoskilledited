@@ -31,18 +31,18 @@ client = OpenAI(
     api_key="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"
 )
 
-
 def get_dict():
     data = pd.read_csv('job-skill.csv')
-    required_columns = {"JobRole", "SkillList", "Proficiency Level"}
+    required_columns = {"Sector", "JobRole", "SkillList", "Proficiency Level"}
+    skill_df = df[["Sector", "JobRole", "SkillList", "Proficiency Level"]].copy()
+    
+    skill_df = skill_df[
+        (skill_df["JobRole"] != "") & (skill_df["SkillList"] != "")
+    ]
 
-    data = data.drop(columns= ['TSC_CCS Type','Proficiency Level', 'TSC_CCS Code'])
-    df = data[data["Sector"] == sector]
-    df = df.drop(columns = ['Sector', 'Track'])
-    result = {}
 
     for _, row in df.iterrows():
-        key = row["TSC_CCS Title"]
+        key = row["SkillList"]
         result.setdefault(key, []).extend(row.tolist())
     for key in result:
         result[key] = list(set(result[key]))
