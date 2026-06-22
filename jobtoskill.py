@@ -1,0 +1,88 @@
+from openai import OpenAI
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+import pandas as pd
+
+sector = input("What Sector are you in?")
+
+client = OpenAI(
+    api_key="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"
+)
+
+
+def get_dict():
+    data = pd.read_excel(r"C:\Users\reann\OneDrive\PyCon\copyofjobsandskills-skillsfuture-skills-framework-dataset.xlsx", sheet_name = 'Job Role_TCS_CCS')
+    data = data.drop(columns= ['TSC_CCS Type','Proficiency Level', 'TSC_CCS Code'])
+    df = data[data["Sector"] == sector]
+    df = df.drop(columns = ['Sector', 'Track'])
+    result = {}
+
+    for _, row in df.iterrows():
+        key = row["TSC_CCS Title"]
+        result.setdefault(key, []).extend(row.tolist())
+    for key in result:
+        result[key] = list(set(result[key]))
+    return result
+
+
+skill_dict = get_dict()
+'''
+def embed(text_list):
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text_list
+    )
+    return [np.array(d.embedding) for d in response.data]
+'''
+def embed(text_list, batch_size=100):
+    all_embeddings = []
+
+    for i in range(0, len(text_list), batch_size):
+        batch = text_list[i:i + batch_size]
+
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=batch
+        )
+
+        batch_embeddings = [np.array(d.embedding) for d in response.data]
+        all_embeddings.extend(batch_embeddings)
+
+    return all_embeddings
+
+
+
+def detect_skills(job):
+    text_list = [job]
+    index_map = []
+    for skill, terms in skill_dict.items():
+        for t in terms:
+            text_list.append(t)
+            index_map.append(skill)
+
+    embeddings = embed(text_list)
+    job_vec    = embeddings[0]
+    skill_vecs  = embeddings[1:]
+
+
+    sims = cosine_similarity([job_vec], skill_vecs)[0]
+
+    best_per_skill = {}
+    for sim, (skill) in zip(sims, index_map):
+        best_per_skill[skill] = max(best_per_skill.get(skill, 0), sim)
+
+
+    matches = [
+        (skill, score)
+        for skill, score in best_per_skill.items()
+        if score >= 0.5 #0.5 is the threshold
+    ]
+    return sorted(matches, key=lambda x: x[1], reverse=True)
+
+
+if __name__ == "__main__":
+    job_input = input("What is your job?")
+    results   = detect_skills(job_input)
+
+    for skill, score in results:
+        print(f"{skill:20s}  {score:.2f}")
