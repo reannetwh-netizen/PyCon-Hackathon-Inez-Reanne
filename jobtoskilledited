@@ -1,0 +1,202 @@
+import re
+from collections import Counter
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+sectors = [
+    'Accountancy', 'Aerospace', 'Agrifood', 'Air Transport', 'Arts',
+    'BioPharmaceuticals Manufacturing', 'Built Environment',
+    'Carbon Services and Trading', 'Design', 'Early Childhood',
+    'Electronics', 'Energy and Chemicals', 'Energy and Power',
+    'Engineering Services', 'Environmental Services', 'Financial Services',
+    'Food Manufacturing', 'Food Services', 'Healthcare',
+    'Hotel and Accommodation Services', 'Human Resource',
+    'Infocomm Technology', 'Intellectual Property', 'Landscape',
+    'Legal Services', 'Logistics', 'Marine and Offshore', 'Media',
+    'Precision Engineering', 'Public Transport', 'Retail', 'Sea Transport',
+    'Security', 'Social Service', 'Tourism',
+    'Trade Associations and Chambers', 'Training and Adult Education',
+    'Wholesale Trade', 'Workplace Safety and Health'
+]
+
+
+def normalize(text: str) -> str:
+    if text is None:
+        return ""
+    return " ".join(re.findall(r"\b\w+\b", str(text).lower()))
+
+
+def load_skill_data() -> pd.DataFrame:
+    df = pd.read_csv("job-skill.csv")
+    required_columns = {"Sector", "JobRole", "SkillList", "Proficiency Level"}
+    if not required_columns.issubset(df.columns):
+        raise ValueError(
+            f"job-skill.csv must include columns: {', '.join(sorted(required_columns))}"
+        )
+
+    df = df.dropna(subset=["Sector", "JobRole", "SkillList"])
+    df = df[(df["JobRole"] != "") & (df["SkillList"] != "")]
+    return df
+
+
+def build_skill_corpus(df: pd.DataFrame) -> dict:
+    skill_corpus = {}
+    for _, row in df.iterrows():
+        skill_name = str(row["SkillList"]).strip()
+        job_role = normalize(row["JobRole"])
+        sector_name = normalize(row["Sector"])
+        text = " ".join([skill_name.lower(), job_role, sector_name])
+
+        if skill_name not in skill_corpus:
+            skill_corpus[skill_name] = {
+                "text": [],
+                "sectors": set(),
+            }
+
+        skill_corpus[skill_name]["text"].append(text)
+        skill_corpus[skill_name]["sectors"].add(row["Sector"].strip())
+
+    for skill_name, entry in skill_corpus.items():
+        entry["text"] = normalize(" ".join(entry["text"]))
+        entry["sectors"] = sorted(entry["sectors"])
+    return skill_corpus
+
+
+def text_to_vector(text: str) -> Counter:
+    tokens = normalize(text).split()
+    return Counter(tokens)
+
+
+def cosine_similarity(vec_a: Counter, vec_b: Counter) -> float:
+    if not vec_a or not vec_b:
+        return 0.0
+
+    intersection = set(vec_a.keys()) & set(vec_b.keys())
+    dot = sum(vec_a[token] * vec_b[token] for token in intersection)
+    norm_a = np.sqrt(sum(value * value for value in vec_a.values()))
+    norm_b = np.sqrt(sum(value * value for value in vec_b.values()))
+
+    return float(dot / (norm_a * norm_b)) if norm_a and norm_b else 0.0
+
+
+def make_checkbox_key(prefix: str, skill_name: str) -> str:
+    safe_name = re.sub(r"\W+", "_", skill_name.lower()).strip("_")
+    return f"{prefix}_{safe_name}"
+
+
+def detect_skills(job_text: str, skill_corpus: dict, selected_sector: str) -> list:
+    job_vector = text_to_vector(job_text)
+    matches = []
+
+    for skill, data in skill_corpus.items():
+        if selected_sector != "All" and selected_sector not in data["sectors"]:
+            continue
+
+        skill_vector = text_to_vector(data["text"])
+        score = cosine_similarity(job_vector, skill_vector)
+        matches.append((skill, score, data["sectors"]))
+
+    return sorted(matches, key=lambda item: item[1], reverse=True)
+
+
+def render_skill_checkboxes(results: list, prefix: str, label: str) -> list:
+    st.write(label)
+    st.write("Use the checkboxes to select skills that apply to you.")
+
+    header_cols = st.columns([0.08, 0.7, 0.22])
+    header_cols[0].markdown("**Have**")
+    header_cols[1].markdown("**Skill**")
+    header_cols[2].markdown("**Similarity**")
+
+    selected_skills = []
+    for skill, score, _ in results:
+        key = make_checkbox_key(prefix, skill)
+        cols = st.columns([0.08, 0.7, 0.22])
+        checked = cols[0].checkbox("", key=key, value=st.session_state.get(key, False))
+        cols[1].write(skill)
+        cols[2].write(f"{score:.3f}")
+        if checked:
+            selected_skills.append(skill)
+
+    return selected_skills
+
+
+def main():
+    st.set_page_config(page_title="NewCareer Skill Matcher", layout="wide")
+    st.title("NewCareer Skill Matcher")
+    st.write("Track your current skills and compare them against the skills needed for your desired career transition.")
+
+    try:
+        df = load_skill_data()
+    except Exception as exc:
+        st.error(f"Failed to load `job-skill.csv`: {exc}")
+        return
+
+    skill_corpus = build_skill_corpus(df)
+
+    with st.expander("Current role"):
+        current_sector = st.selectbox("What sector are you currently in?", ["All"] + sectors, index=0, key="current_sector")
+        current_job = st.text_input("Current job title or description", "", key="current_job")
+
+        if current_job:
+            with st.spinner("Matching current skills..."):
+                current_results = [
+                    (skill, score, sectors)
+                    for skill, score, sectors in detect_skills(current_job, skill_corpus, current_sector)
+                    if score > 0.0
+                ]
+
+            if current_results:
+                st.subheader("Skills you may already have")
+                have_skills = render_skill_checkboxes(current_results, "have", "Select the skills you have already developed:")
+                if have_skills:
+                    st.success(f"You selected {len(have_skills)} current skill(s).")
+                else:
+                    st.info("No skills selected yet. Tick the ones you have developed.")
+            else:
+                st.warning("No current skill matches found. Try a more detailed job description.")
+        else:
+            st.info("Enter your current job to see the skills you already have.")
+
+    with st.expander("Desired transition"):
+        target_sector = st.selectbox("What sector do you want to transition to?", ["All"] + sectors, index=0, key="target_sector")
+        target_job = st.text_input("Target job title or description", "", key="target_job")
+
+        if target_job:
+            with st.spinner("Matching transition skills..."):
+                target_results = [
+                    (skill, score, sectors)
+                    for skill, score, sectors in detect_skills(target_job, skill_corpus, target_sector)
+                    if score > 0.0
+                ]
+
+            if target_results:
+                have_skills = [
+                    skill for skill in skill_corpus.keys()
+                    if st.session_state.get(make_checkbox_key("have", skill), False)
+                ]
+                missing_results = [
+                    (skill, score, sectors)
+                    for skill, score, sectors in target_results
+                    if skill not in have_skills
+                ]
+
+                if missing_results:
+                    st.subheader("Skills to acquire")
+                    learn_skills = render_skill_checkboxes(missing_results, "learn", "Select the skills you want to learn:")
+                    if learn_skills:
+                        st.success(f"You selected {len(learn_skills)} skill(s) to learn.")
+                    else:
+                        st.info("Tick the skills you want to learn from the transition list.")
+                else:
+                    st.success("Your current skill set already covers the top matching skills for this target role.")
+            else:
+                st.warning("No target skill matches found. Try a more detailed target job description.")
+        else:
+            st.info("Enter your desired target job to see the skills you need to acquire.")
+
+
+if __name__ == "__main__":
+    main()
