@@ -1,4 +1,4 @@
-#modified version from VScodeVersion to fit Streamlit without the use of OpenAI
+#modified version from VScodeVersion to fit Streamlit, without the use of OpenAI
 
 import re
 from collections import Counter
@@ -51,10 +51,6 @@ def load_course_data() -> pd.DataFrame:
         "about_this_course",
         "what_you_learn",
     }
-    if not required_columns.issubset(df.columns):
-        raise ValueError(
-            f"courses.xlsx must include columns: {', '.join(sorted(required_columns))}"
-        )
 
     df = df.dropna(subset=["coursetitle", "course_fee_after_subsidies"])
     df["course_fee_after_subsidies"] = pd.to_numeric(
