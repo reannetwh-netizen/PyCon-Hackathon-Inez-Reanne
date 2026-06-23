@@ -15,7 +15,7 @@ dream_job = input("Input your dream job:")
 
 
 client = OpenAI(
-    api_key="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"
+    api_key="YourAPIKey"
 )
 
 #returns a dictionary where key is the skill and value is a list of information regarding the skill
