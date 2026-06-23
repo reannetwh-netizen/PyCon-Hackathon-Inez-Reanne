@@ -142,6 +142,7 @@ def build_skill_corpus(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
 def embed_texts(client: OpenAI, texts: list[str], batch_size: int = 50) -> list[np.ndarray]:
     all_embeddings: list[np.ndarray] = []
     #ensure individual inputs aren't too long for the embedding model
+    #trim long text to reduce the chance of exceeding the embedding model's input limit
     def _trim(s: str, max_chars: int = 2000) -> str:
         if not s:
             return ""
@@ -210,6 +211,7 @@ def get_skill_embeddings(_client: OpenAI, skill_corpus: dict[str, dict[str, Any]
     return skills, embeddings, sectors
 
 
+#match a user's job description against the skill embedding database
 def detect_skills(
     job_text: str,
     skill_corpus: dict[str, dict[str, Any]],
@@ -226,6 +228,7 @@ def detect_skills(
         return []
 
     skills, embeddings, sectors = skill_embeddings
+    #if a sector is selected, only compare against skills from that sector
     if selected_sector != "All":
         selected = [i for i, sector_list in enumerate(sectors) if selected_sector in sector_list]
         if not selected:
