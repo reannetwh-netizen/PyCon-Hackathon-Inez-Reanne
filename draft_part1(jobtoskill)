@@ -8,7 +8,7 @@ import pandas as pd
 sector = input("What Sector are you in?")
 
 client = OpenAI(
-    api_key="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"
+    api_key="YourAPIKey"
 )
 
 
