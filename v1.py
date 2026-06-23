@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import re
 
+#take in user's dream job and current job
+#sector of dream job and current job is needed as well as helps shorten the run time of the program
 sector1 = input("Input your current job sector:")
 current_job = input("Input your current job:")
 sector2 = input("Input your dream job sector:")
@@ -14,7 +16,7 @@ client = OpenAI(
     api_key="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"
 )
 
-
+#returns a dictionary where key is the skill and value is a list of information regarding the skill
 def get_dict(sector):
     data = pd.read_excel(r"C:\Users\reann\OneDrive\PyCon\copyofjobsandskills-skillsfuture-skills-framework-dataset.xlsx", sheet_name = 'Job Role_TCS_CCS')
     data = data.drop(columns= ['TSC_CCS Type','Proficiency Level', 'TSC_CCS Code'])
@@ -29,7 +31,7 @@ def get_dict(sector):
         result[key] = list(set(result[key]))
     return result
 
-
+#generate embeddings on a list
 def embed(text_list, batch_size=100):
     all_embeddings = []
 
@@ -47,7 +49,7 @@ def embed(text_list, batch_size=100):
     return all_embeddings
 
 
-
+#return the skills where score is greater than 0.5
 def detect_skills(job, sector):
     text_list = [job]
     index_map = []
@@ -87,20 +89,20 @@ print("Required Skills:")
 for skill, score in dream_skills:
     print(f"\n{skill:20s}  {score:.2f}")
 
-#user verifies their current_skills, current_skills is being updated
+#before the next line of code, allow user to verify their current_skills, then update current_skills
 current_skills = {skill for skill, _ in current_skills}
 dream_skills = {skill for skill, _ in dream_skills}
 
 missing_skills= list(dream_skills- current_skills)
 print("The following are your missing skills:")
 print(missing_skills)
-#user verifies their missing_skills, missing_skills is being updated
+#before the next line of code, allow user to verify their missing_skills, then update missing_skills
 
 
 df2 = pd.read_excel(r"C:\Users\reann\OneDrive\PyCon\copyofMySkillsFutureCourseDirectory.xlsx")
 
 
-#df2 has 'coursetitle', 'about_this_course', 'course_fee_after_subsidies','what_you_learn'
+#drop columns such that df2 has 4 columns: 'coursetitle', 'about_this_course', 'course_fee_after_subsidies','what_you_learn'
 df2 = df2.drop(columns= ['coursereferencenumber', 'trainingprovideruen',
        'trainingprovideralias', 'courseratings_value', 'courseratings_stars',
        'courseratings_noofrespondents', 'jobcareer_impact_value',
@@ -109,6 +111,8 @@ df2 = df2.drop(columns= ['coursereferencenumber', 'trainingprovideruen',
        'number_of_hours', 'training_commitment', 'conducted_in', 'minimum_entry_requirement'])
 
 budget = int(input("What is your budget?"))
+
+#filter courses by budget and skills to be learnt
 def get_course(skill):
     courses = []
     for course, fees, about, learn in df2.itertuples(index=False):
@@ -118,17 +122,17 @@ def get_course(skill):
             courses.append(course)
     return courses
 
-
 for skill in missing_skills:
     print(get_course(skill))
 
-course_chosen = input("Which course would you like to find out more about?")
 
+#allow user to choose a course to explore more
+course_chosen = input("Which course would you like to find out more about?")
 
 df2 = pd.read_excel(r"C:\Users\reann\OneDrive\PyCon\copyofMySkillsFutureCourseDirectory.xlsx")
 
 
-
+# collate all information about the course 
 course_info = "\n".join(
     f"{col}={val}"
     for col, val in df2[df2["coursetitle"] == course_chosen].iloc[0].items()
@@ -136,7 +140,7 @@ course_info = "\n".join(
 
 print(course_info)
 
-
+# AI course recommendation explainer
 def explain_course(
     current_skills,
     current_job,
