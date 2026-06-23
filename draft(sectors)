@@ -1,3 +1,5 @@
+#list of sectors used in the dropdown filters
+
 sectors = ['Accountancy',                        'Aerospace',
                          'Agrifood',                    'Air Transport',
                              'Arts', 'BioPharmaceuticals Manufacturing',
