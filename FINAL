@@ -1,0 +1,463 @@
+#final version of code that our Streamlit app runs with, with the use of OpenAI
+
+import os
+import re
+from sklearn.metrics.pairwise import cosine_similarity
+from typing import Any
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+from openai import OpenAI
+
+SECTORS = [
+    'Accountancy', 'Aerospace', 'Agrifood', 'Air Transport', 'Arts',
+    'BioPharmaceuticals Manufacturing', 'Built Environment',
+    'Carbon Services and Trading', 'Design', 'Early Childhood',
+    'Electronics', 'Energy and Chemicals', 'Energy and Power',
+    'Engineering Services', 'Environmental Services', 'Financial Services',
+    'Food Manufacturing', 'Food Services', 'Healthcare',
+    'Hotel and Accommodation Services', 'Human Resource',
+    'Infocomm Technology', 'Intellectual Property', 'Landscape',
+    'Legal Services', 'Logistics', 'Marine and Offshore', 'Media',
+    'Precision Engineering', 'Public Transport', 'Retail', 'Sea Transport',
+    'Security', 'Social Service', 'Tourism',
+    'Trade Associations and Chambers', 'Training and Adult Education',
+    'Wholesale Trade', 'Workplace Safety and Health'
+]
+
+SKILL_EMBEDDINGS_PATH = "skill_embeddings.npz"
+MAX_DISPLAY_SKILLS = 40
+
+# Place your OpenAI API key here if you want it embedded in the code.
+# WARNING: storing secrets in source code is insecure. Prefer environment variables or a secrets manager.
+OPENAI_API_KEY = "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"
+
+def make_checkbox_key(prefix: str, skill: str) -> str:
+    safe_skill = re.sub(r"\W+", "_", skill.strip().lower())
+    return f"{prefix}_{safe_skill}"
+
+
+def normalize(text: str) -> str:
+    if text is None:
+        return ""
+    return " ".join(re.findall(r"\b\w+\b", str(text).lower()))
+
+
+def load_skill_data() -> pd.DataFrame:
+    df = pd.read_csv("job-skill.csv")
+    required_columns = {"Sector", "JobRole", "SkillList", "Proficiency Level"}
+    if not required_columns.issubset(df.columns):
+        raise ValueError(
+            f"job-skill.csv must include columns: {', '.join(sorted(required_columns))}"
+        )
+
+    df = df.dropna(subset=["Sector", "JobRole", "SkillList"])
+    df = df[(df["JobRole"] != "") & (df["SkillList"] != "")]
+    return df
+
+
+def load_course_data() -> pd.DataFrame:
+    df = pd.read_excel("courses.xlsx", engine="openpyxl")
+    required_columns = {
+        "coursetitle",
+        "course_fee_after_subsidies",
+        "about_this_course",
+        "what_you_learn",
+    }
+    if not required_columns.issubset(df.columns):
+        raise ValueError(
+            f"courses.xlsx must include columns: {', '.join(sorted(required_columns))}"
+        )
+
+    df = df.dropna(subset=["coursetitle", "course_fee_after_subsidies"])
+    df["course_fee_after_subsidies"] = pd.to_numeric(
+        df["course_fee_after_subsidies"], errors="coerce"
+    )
+    return df
+
+
+def get_course_recommendations(selected_skills: list[str], budget: float, df: pd.DataFrame) -> pd.DataFrame:
+    if not selected_skills or budget is None or df.empty:
+        return df.iloc[0:0]
+
+    matches = []
+    for _, row in df.iterrows():
+        fee = row["course_fee_after_subsidies"]
+        if pd.isna(fee) or fee > budget:
+            continue
+
+        text = " ".join(
+            [str(row.get("about_this_course", "")), str(row.get("what_you_learn", ""))]
+        ).lower()
+
+        score = 0
+        for skill in selected_skills:
+            escaped_skill = re.escape(skill.lower())
+            if re.search(rf"\b{escaped_skill}\b", text):
+                score += 1
+
+        if score > 0:
+            matches.append(
+                {
+                    "score": score,
+                    "fee": fee,
+                    "title": row["coursetitle"],
+                    "rating": row.get("courseratings_value", "N/A"),
+                    "about": row.get("about_this_course", ""),
+                    "learn": row.get("what_you_learn", ""),
+                }
+            )
+
+    if not matches:
+        return df.iloc[0:0]
+
+    return (
+        pd.DataFrame(matches)
+        .sort_values(["score", "fee"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+
+
+def build_skill_corpus(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    skill_corpus: dict[str, dict[str, Any]] = {}
+    for _, row in df.iterrows():
+        skill_name = str(row["SkillList"]).strip()
+        if not skill_name:
+            continue
+
+        job_role = normalize(row["JobRole"])
+        sector_name = normalize(row["Sector"])
+        text = " ".join([skill_name.lower(), job_role, sector_name])
+
+        if skill_name not in skill_corpus:
+            skill_corpus[skill_name] = {"text": [], "sectors": set()}
+
+        skill_corpus[skill_name]["text"].append(text)
+        skill_corpus[skill_name]["sectors"].add(row["Sector"].strip())
+
+    for entry in skill_corpus.values():
+        entry["text"] = normalize(" ".join(entry["text"]))
+        entry["sectors"] = sorted(entry["sectors"])
+
+    return skill_corpus
+
+
+def embed_texts(client: OpenAI, texts: list[str], batch_size: int = 50) -> list[np.ndarray]:
+    all_embeddings: list[np.ndarray] = []
+    # Defensive: ensure individual inputs aren't too long for the embedding model.
+    def _trim(s: str, max_chars: int = 2000) -> str:
+        if not s:
+            return ""
+        return s if len(s) <= max_chars else s[:max_chars]
+
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        batch = [_trim(t, max_chars=2000) for t in batch]
+        try:
+            response = client.embeddings.create(model="text-embedding-3-small", input=batch)
+            all_embeddings.extend([np.array(item.embedding) for item in response.data])
+        except Exception:
+            # Try a more aggressive trim if the service complains about token limits.
+            short_batch = [_trim(t, max_chars=1000) for t in batch]
+            response = client.embeddings.create(model="text-embedding-3-small", input=short_batch)
+            all_embeddings.extend([np.array(item.embedding) for item in response.data])
+    return all_embeddings
+
+
+@st.cache_resource
+def get_openai_client(api_key: str) -> OpenAI | None:
+    if not api_key:
+        return None
+    # Ensure the environment variable is set for downstream OpenAI internals.
+    os.environ.setdefault("OPENAI_API_KEY", api_key)
+    return OpenAI(api_key=api_key)
+
+
+def _cosine_similarity_matrix(job_emb: np.ndarray, emb_matrix: np.ndarray) -> np.ndarray:
+    job_emb = np.asarray(job_emb, dtype=float)
+    emb_matrix = np.asarray(emb_matrix, dtype=float)
+    denom = np.linalg.norm(emb_matrix, axis=1) * np.linalg.norm(job_emb)
+    denom = np.where(denom == 0, 1e-9, denom)
+    return np.dot(emb_matrix, job_emb) / denom
+
+
+@st.cache_resource
+def get_skill_embeddings(_client: OpenAI, skill_corpus: dict[str, dict[str, Any]]) -> tuple[list[str], np.ndarray, list[list[str]]]:
+    skills = []
+    texts: list[str] = []
+    sectors: list[list[str]] = []
+
+    for skill_name, data in skill_corpus.items():
+        skills.append(skill_name)
+        texts.append(data["text"])
+        sectors.append(data["sectors"])
+
+    # Try to load precomputed embeddings if available to avoid repeated API calls.
+    if os.path.exists(SKILL_EMBEDDINGS_PATH):
+        try:
+            npz = np.load(SKILL_EMBEDDINGS_PATH, allow_pickle=True)
+            stored_skills = npz["skills"].tolist()
+            emb = npz["emb"]
+            # If stored skills match current skills order, use them.
+            if stored_skills == skills and emb.shape[0] == len(skills):
+                return skills, emb, sectors
+        except Exception:
+            pass
+
+    embeddings = np.stack(embed_texts(_client, texts))
+
+    # Save embeddings for future runs (best-effort, compressed).
+    try:
+        np.savez_compressed(SKILL_EMBEDDINGS_PATH, skills=np.array(skills, dtype=object), emb=embeddings)
+    except Exception:
+        pass
+
+    return skills, embeddings, sectors
+
+
+def detect_skills(
+    job_text: str,
+    skill_corpus: dict[str, dict[str, Any]],
+    selected_sector: str,
+    client: OpenAI | None,
+    skill_embeddings: tuple[list[str], np.ndarray, list[list[str]]] | None,
+    top_k: int = 40,
+) -> list[tuple[str, float, list[str]]]:
+    if client is None or skill_embeddings is None or not job_text:
+        return []
+
+    job_text = normalize(job_text)
+    if not job_text:
+        return []
+
+    skills, embeddings, sectors = skill_embeddings
+    if selected_sector != "All":
+        selected = [i for i, sector_list in enumerate(sectors) if selected_sector in sector_list]
+        if not selected:
+            return []
+        embeddings = embeddings[selected]
+        skills = [skills[i] for i in selected]
+        sectors = [sectors[i] for i in selected]
+
+    job_emb = embed_texts(client, [job_text])[0]
+    scores = _cosine_similarity_matrix(job_emb, embeddings)
+
+    ordered = sorted(
+        zip(skills, scores, sectors), key=lambda item: item[1], reverse=True
+    )
+    return [(skill, float(score), sector_list) for skill, score, sector_list in ordered[:top_k] if score > 0]
+
+
+def render_skill_checkboxes(results: list[tuple[str, float, list[str]]], prefix: str, label: str) -> list[str]:
+    st.write(label)
+    st.write("Use the checkboxes to select skills that apply to you.")
+    header_cols = st.columns([0.08, 0.7, 0.22])
+    header_cols[0].markdown("**Have**")
+    header_cols[1].markdown("**Skill**")
+    header_cols[2].markdown("**Similarity**")
+
+    selected_skills: list[str] = []
+    for skill, score, _ in results:
+        key = make_checkbox_key(prefix, skill)
+        cols = st.columns([0.08, 0.7, 0.22])
+        checked = cols[0].checkbox(
+            "Select",
+            key=key,
+            label_visibility="collapsed",
+            value=st.session_state.get(key, False),
+        )
+        cols[1].write(skill)
+        cols[2].write(f"{score:.3f}")
+        if checked:
+            selected_skills.append(skill)
+
+    return selected_skills
+
+
+def generate_course_explanation(
+    client: OpenAI,
+    current_job: str,
+    target_job: str,
+    missing_skills: list[str],
+    course_title: str,
+    course_about: str,
+    course_learn: str,
+) -> str:
+    prompt = f"""You are a career transition advisor. Given the user's profile and a course, provide a concise explanation (3-4 sentences max).
+
+User Profile:
+- Current job: {current_job}
+- Target job: {target_job}
+- Skills to acquire: {', '.join(missing_skills)}
+
+Course Information:
+- Title: {course_title}
+- Description: {course_about}
+- What you'll learn: {course_learn}
+
+Provide a brief explanation covering:
+1. How this course helps the career transition
+2. Which missing skills it addresses
+3. Any potential limitations
+
+Keep it concise and practical."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=250,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content
+    except Exception as exc:
+        return f"Could not generate explanation: {str(exc)}"
+
+
+def main() -> None:
+    st.set_page_config(page_title="NewCareer Skill Matcher", layout="wide")
+    st.title("NewCareer Skill Matcher")
+    st.write("Track your current skills and compare them against the skills needed for your desired career transition.")
+
+    # Use the module-level OPENAI_API_KEY if set, otherwise fall back to the environment.
+    api_key = OPENAI_API_KEY.strip() or os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        st.error("OpenAI API key is not set. Please set OPENAI_API_KEY at the top of this file or in the environment.")
+        return
+
+    try:
+        df = load_skill_data()
+    except Exception as exc:
+        st.error(f"Failed to load `job-skill.csv`: {exc}")
+        return
+
+    skill_corpus = build_skill_corpus(df)
+
+    try:
+        df_courses = load_course_data()
+    except Exception as exc:
+        st.error(f"Failed to load `courses.xlsx`: {exc}")
+        df_courses = pd.DataFrame()
+
+    client = get_openai_client(api_key)
+    skill_embeddings = None
+    try:
+        with st.spinner("Preparing AI skill embeddings..."):
+            skill_embeddings = get_skill_embeddings(client, skill_corpus)
+    except Exception as exc:
+        st.error(f"Failed to load OpenAI embeddings: {exc}")
+        return
+
+    st.subheader("Current role")
+    current_sector = st.selectbox(
+        "What sector are you currently in?",
+        ["All"] + SECTORS,
+        index=0,
+        key="current_sector",
+    )
+    current_job = st.text_input("Current job title or description", "", key="current_job")
+
+    if current_job:
+        with st.spinner("Matching current skills..."):
+            current_results = detect_skills(
+                current_job,
+                skill_corpus,
+                current_sector,
+                client,
+                skill_embeddings,
+                top_k=MAX_DISPLAY_SKILLS,
+            )
+
+        if current_results:
+            st.subheader("Skills you may already have")
+            have_skills = render_skill_checkboxes(current_results, "have", "Select the skills you have already developed:")
+            if have_skills:
+                st.success(f"You selected {len(have_skills)} current skill(s).")
+            else:
+                st.info("No skills selected yet. Tick the ones you have developed.")
+        else:
+            st.warning("No current skill matches found. Try a more detailed job description.")
+    else:
+        st.info("Enter your current job to see the skills you already have.")
+
+    st.subheader("Desired transition")
+    target_sector = st.selectbox(
+        "What sector do you want to transition to?",
+        ["All"] + SECTORS,
+        index=0,
+        key="target_sector",
+    )
+    target_job = st.text_input("Target job title or description", "", key="target_job")
+
+    if target_job:
+        with st.spinner("Matching transition skills..."):
+            target_results = detect_skills(
+                target_job,
+                skill_corpus,
+                target_sector,
+                client,
+                skill_embeddings,
+                top_k=MAX_DISPLAY_SKILLS,
+            )
+
+        if target_results:
+            have_skills = [
+                skill
+                for skill in skill_corpus.keys()
+                if st.session_state.get(make_checkbox_key("have", skill), False)
+            ]
+            missing_results = [
+                (skill, score, sectors)
+                for skill, score, sectors in target_results
+                if skill not in have_skills
+            ]
+
+            if missing_results:
+                st.subheader("Skills to acquire")
+                learn_skills = render_skill_checkboxes(missing_results, "learn", "Select the skills you want to learn:")
+                if learn_skills:
+                    st.success(f"You selected {len(learn_skills)} skill(s) to learn.")
+
+                    budget = st.number_input(
+                        "Your budget for courses (SGD)",
+                        min_value=0.0,
+                        value=500.0,
+                        step=50.0,
+                        key="budget",
+                    )
+
+                    course_matches = get_course_recommendations(learn_skills, budget, df_courses)
+                    if not course_matches.empty:
+                        st.subheader("Recommended courses within your budget")
+                        for _, course in course_matches.head(10).iterrows():
+                            with st.expander(f"{course['title']} — SGD {course['fee']:.2f}"):
+                                st.write(f"**Rating:** {course['rating']}")
+                                st.write(f"**Skills matched:** {int(course['score'])}")
+                                st.markdown(f"**About this course:** {course['about']}")
+                                st.markdown(f"**What you learn:** {course['learn']}")
+
+                                with st.spinner("Generating AI explanation..."):
+                                    explanation = generate_course_explanation(
+                                        client,
+                                        current_job,
+                                        target_job,
+                                        learn_skills,
+                                        course["title"],
+                                        course["about"],
+                                        course["learn"],
+                                    )
+                                st.info(f"**AI Recommendation:** {explanation}")
+                    else:
+                        st.warning("No matching courses found within your budget for the selected skills.")
+                else:
+                    st.info("Tick the skills you want to learn from the transition list.")
+            else:
+                st.success("Your current skill set already covers the top matching skills for this target role.")
+        else:
+            st.warning("No target skill matches found. Try a more detailed target job description.")
+    else:
+        st.info("Enter your desired target job to see the skills you need to acquire.")
+
+
+if __name__ == "__main__":
+    main()
