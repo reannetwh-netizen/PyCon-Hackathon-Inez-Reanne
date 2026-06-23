@@ -37,14 +37,14 @@ def make_checkbox_key(prefix: str, skill: str) -> str:
     safe_skill = re.sub(r"\W+", "_", skill.strip().lower())
     return f"{prefix}_{safe_skill}"
 
-
+#standardise texts
 def normalize(text: str) -> str:
     if text is None:
         return ""
     return " ".join(re.findall(r"\b\w+\b", str(text).lower()))
 
 
-#load data from dataset 'job-to-skill.csv'
+#load job-skill dataset 
 def load_skill_data() -> pd.DataFrame:
     df = pd.read_csv("job-skill.csv")
     required_columns = {"Sector", "JobRole", "SkillList", "Proficiency Level"}
@@ -54,7 +54,7 @@ def load_skill_data() -> pd.DataFrame:
     return df
 
 
-#load data from dataset 'courses.xlsx'
+#load course dataset
 def load_course_data() -> pd.DataFrame:
     df = pd.read_excel("courses.xlsx", engine="openpyxl")
     required_columns = {
