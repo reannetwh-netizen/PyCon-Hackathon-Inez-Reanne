@@ -71,6 +71,7 @@ def load_course_data() -> pd.DataFrame:
     return df
 
 
+#match selected skills against course descriptions and learning outcomes while keeping only courses within budget
 def get_course_recommendations(selected_skills: list[str], budget: float, df: pd.DataFrame) -> pd.DataFrame:
     if not selected_skills or budget is None or df.empty:
         return df.iloc[0:0]
@@ -113,6 +114,7 @@ def get_course_recommendations(selected_skills: list[str], budget: float, df: pd
     )
 
 
+#build searchable texts for each skill
 def build_skill_corpus(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
     skill_corpus: dict[str, dict[str, Any]] = {}
     for _, row in df.iterrows():
