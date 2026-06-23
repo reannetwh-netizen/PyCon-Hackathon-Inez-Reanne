@@ -309,6 +309,8 @@ import pandas as pd
 import streamlit as st
 from openai import OpenAI
 
+OPENAI_API_KEY = "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"
+
 sectors = [
     'Accountancy', 'Aerospace', 'Agrifood', 'Air Transport', 'Arts',
     'BioPharmaceuticals Manufacturing', 'Built Environment',
@@ -543,27 +545,6 @@ def main():
     st.title("NewCareer Skill Matcher")
     st.write("Track your current skills and compare them against the skills needed for your desired career transition.")
 
-    # Sidebar for OpenAI API key
-    with st.sidebar:
-        st.header("Settings")
-        api_key = st.text_input(
-            "OpenAI API Key",
-            type="password",
-            help="Enter your OpenAI API key for AI-powered course explanations.",
-            key="openai_api_key",
-        )
-        if api_key:
-            st.success("API key configured!")
-        else:
-            st.info("Enter your OpenAI API key to enable AI explanations for courses.")
-    
-    client = None
-    if api_key:
-        try:
-            client = get_openai_client(api_key)
-        except Exception as e:
-            st.error(f"Failed to initialize OpenAI client: {e}")
-
     try:
         df = load_skill_data()
     except Exception as exc:
@@ -601,6 +582,8 @@ def main():
                 st.warning("No current skill matches found. Try a more detailed job description.")
         else:
             st.info("Enter your current job to see the skills you already have.")
+
+    client = get_openai_client(OPENAI_API_KEY)
 
     with st.expander("Desired transition"):
         target_sector = st.selectbox("What sector do you want to transition to?", ["All"] + sectors, index=0, key="target_sector")
