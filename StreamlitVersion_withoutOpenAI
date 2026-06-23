@@ -24,12 +24,14 @@ sectors = [
 ]
 
 
+#standardise texts
 def normalize(text: str) -> str:
     if text is None:
         return ""
     return " ".join(re.findall(r"\b\w+\b", str(text).lower()))
 
 
+#load the job-skill dataset
 def load_skill_data() -> pd.DataFrame:
     df = pd.read_csv("job-skill.csv")
     required_columns = {"Sector", "JobRole", "SkillList", "Proficiency Level"}
@@ -43,6 +45,7 @@ def load_skill_data() -> pd.DataFrame:
     return df
 
 
+#load the course dataset
 def load_course_data() -> pd.DataFrame:
     df = pd.read_excel("courses.xlsx", engine="openpyxl")
     required_columns = {
@@ -59,6 +62,7 @@ def load_course_data() -> pd.DataFrame:
     return df
 
 
+#match selected skills against course descriptions and learning outcomes while keeping only courses within budget
 def get_course_recommendations(selected_skills: list, budget: float, df: pd.DataFrame) -> pd.DataFrame:
     if not selected_skills or budget is None:
         return df.iloc[0:0]
@@ -101,6 +105,7 @@ def get_course_recommendations(selected_skills: list, budget: float, df: pd.Data
     )
 
 
+#build searchable text for each skill
 def build_skill_corpus(df: pd.DataFrame) -> dict:
     skill_corpus = {}
     for _, row in df.iterrows():
@@ -124,11 +129,12 @@ def build_skill_corpus(df: pd.DataFrame) -> dict:
     return skill_corpus
 
 
+#convert cleaned text into word counts for cosine similarity
 def text_to_vector(text: str) -> Counter:
     tokens = normalize(text).split()
     return Counter(tokens)
 
-
+#return a similarity score
 def cosine_similarity(vec_a: Counter, vec_b: Counter) -> float:
     if not vec_a or not vec_b:
         return 0.0
@@ -151,6 +157,7 @@ def detect_skills(job_text: str, skill_corpus: dict, selected_sector: str) -> li
     matches = []
 
     for skill, data in skill_corpus.items():
+        #if a sector is selected, only compare against skills that appear in that sector
         if selected_sector != "All" and selected_sector not in data["sectors"]:
             continue
 
@@ -188,6 +195,7 @@ def render_skill_checkboxes(results: list, prefix: str, label: str) -> list:
     return selected_skills
 
 
+#build the Streamlit user interface
 def main():
     st.set_page_config(page_title="NewCareer Skill Matcher", layout="wide")
     st.title("NewCareer Skill Matcher")
@@ -243,6 +251,7 @@ def main():
                     if score > 0.0
                 ]
 
+            #treat checked current skills as already acquired, so they are removed from the learning list
             if target_results:
                 have_skills = [
                     skill for skill in skill_corpus.keys()
