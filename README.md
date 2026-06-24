@@ -12,7 +12,7 @@ The solution is an app that:
 4. Recommends relevant SkillsFuture courses based on user's budget. 
 5. Uses OpenAI to explain why each course can help the user as well as the potential limitations of the course.
 
-DEMO URL = 
+DEMO URL = https://drive.google.com/file/d/1j2SxAvkVewZvYfqYlpwzUX4_IMAjY4k9/view?usp=sharing
 
 Tech stack:
 IDE --> VS Code
